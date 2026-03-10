@@ -104,25 +104,25 @@ const WorkBenchPDP = () => {
       {/* Header - WorkBench Blue */}
       <header className="border-b border-border/50 workbench-header sticky top-0 z-10">
         <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <button
               onClick={() => navigate(`/session/${sessionId}`)}
-              className="flex items-center gap-2 text-white/70 hover:text-white transition-colors"
+              className="flex items-center gap-2 text-white/70 hover:text-white transition-colors shrink-0"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
                 <Database className="w-4 h-4 text-white" />
               </div>
-              <div>
-                <h1 className="font-display font-bold text-white">WorkBench PDP</h1>
-                <p className="text-xs text-white/70">Session: {sessionId}</p>
+              <div className="min-w-0">
+                <h1 className="font-display font-bold text-white text-sm sm:text-base">WorkBench PDP</h1>
+                <p className="text-xs text-white/70 truncate hidden sm:block">Session: {sessionId}</p>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {/* Active Users */}
             <ActiveUsersIndicator 
               users={activeUsers} 
@@ -130,8 +130,8 @@ const WorkBenchPDP = () => {
               variant="light"
             />
 
-            {/* Product Count */}
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-lg">
+            {/* Product Count - desktop only */}
+            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-lg">
               <Grid className="w-4 h-4 text-white/70" />
               <span className="text-sm text-white">
                 {products.length} product{products.length !== 1 ? 's' : ''}
@@ -145,7 +145,7 @@ const WorkBenchPDP = () => {
                 size="sm"
               >
                 <Plus className="w-4 h-4" />
-                New Product
+                <span className="hidden sm:inline">New Product</span>
               </Button>
             )}
 
@@ -155,7 +155,7 @@ const WorkBenchPDP = () => {
               onClick={() => navigate(`/session/${sessionId}/webview`)}
             >
               <Eye className="w-4 h-4" />
-              Preview Store
+              <span className="hidden sm:inline">Preview Store</span>
             </Button>
           </div>
         </div>

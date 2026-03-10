@@ -353,7 +353,7 @@ const ProductEditor = ({
         ) : (
           <div className="space-y-3">
             {product.specifications.map((spec) => (
-              <div key={spec.id} className="flex items-center gap-3">
+              <div key={spec.id} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <Input
                   value={spec.name}
                   onChange={(e) => updateSpecification(spec.id, 'name', e.target.value)}
@@ -370,7 +370,7 @@ const ProductEditor = ({
                   variant="ghost"
                   size="icon"
                   onClick={() => removeSpecification(spec.id)}
-                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                  className="shrink-0 self-end sm:self-auto text-muted-foreground hover:text-destructive"
                 >
                   <X className="w-4 h-4" />
                 </Button>

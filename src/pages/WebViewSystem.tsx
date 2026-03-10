@@ -155,13 +155,15 @@ const WebViewSystem = () => {
 
       {/* Switch to WorkBench Banner */}
       <div className="bg-secondary/50 border-b border-border/50">
-        <div className="container mx-auto px-4 py-2 flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">Demo Mode</span> — Data syncs in real-time from WorkBench
+        <div className="container mx-auto px-4 py-2 flex items-center justify-between gap-3">
+          <p className="text-xs sm:text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Demo Mode</span>
+            <span className="hidden sm:inline"> — Data syncs in real-time from WorkBench</span>
           </p>
-          <Button variant="outline" size="sm" onClick={() => navigate(`/session/${sessionId}/workbench`)}>
+          <Button variant="outline" size="sm" onClick={() => navigate(`/session/${sessionId}/workbench`)} className="shrink-0">
             <Wrench className="w-4 h-4" />
-            Switch to WorkBench
+            <span className="hidden sm:inline">Switch to WorkBench</span>
+            <span className="sm:hidden">WorkBench</span>
           </Button>
         </div>
       </div>
@@ -320,8 +322,8 @@ const WebViewSystem = () => {
                 </div>
 
                 {/* Quantity & Add to Cart */}
-                <div className="flex items-center gap-4 pt-4">
-                  <div className="flex items-center border border-border rounded-lg">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4">
+                  <div className="flex items-center border border-border rounded-lg self-start">
                     <button
                       onClick={() => setQuantity(Math.max(1, quantity - 1))}
                       className="p-3 hover:bg-secondary transition-colors"
@@ -341,7 +343,7 @@ const WebViewSystem = () => {
                     </button>
                   </div>
                   <Button
-                    className="flex-1 hilti-button"
+                    className="hilti-button flex-1"
                     size="lg"
                     disabled={!isInStock}
                     onClick={handleAddCurrentToCart}
