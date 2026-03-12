@@ -97,6 +97,10 @@ export interface SessionData {
   cart: CartData;
   activeUsers: ActiveUser[];
   settings: SessionSettings;
+  // Phase 4: SAP Portal & Chapter Structure
+  sapItems?: any[]; // SAPItem[] from sap.ts
+  blueChapters?: any[]; // BlueChapter[] from chapter.ts
+  yellowChapters?: any[]; // YellowChapter[] from chapter.ts
 }
 
 export const generateProductId = (): string => {
@@ -141,6 +145,9 @@ export const createDefaultSession = (sessionId: string): SessionData => ({
     currency: 'USD',
     collaborationEnabled: true,
   },
+  sapItems: [],
+  blueChapters: [],
+  yellowChapters: [],
 });
 
 // Legacy compatibility - map old single product to new format

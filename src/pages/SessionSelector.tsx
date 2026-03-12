@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSession } from '@/hooks/useSession';
 import { Button } from '@/components/ui/button';
-import { ShoppingBag, ArrowLeft, RefreshCw, AlertCircle, Wrench } from 'lucide-react';
+import { ShoppingBag, ArrowLeft, RefreshCw, AlertCircle, Wrench, Database } from 'lucide-react';
 import ActiveUsersIndicator from '@/components/ActiveUsersIndicator';
 
 const SessionSelector = () => {
@@ -109,8 +109,28 @@ const SessionSelector = () => {
             />
           </div>
 
-          {/* System Cards - 2 Cards Layout */}
-          <div className="grid sm:grid-cols-2 gap-6 max-w-2xl mx-auto">
+          {/* System Cards - 3 Cards Layout */}
+          <div className="grid sm:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            {/* SAP Portal Card - Green */}
+            <button
+              onClick={() => navigate(`/session/${sessionId}/sap`)}
+              className="group bg-card rounded-2xl p-8 border border-border/50 text-left transition-all duration-300 hover:border-[#00A74A]/50 shadow-card hover:shadow-lg hover:-translate-y-1"
+            >
+              <div className="w-14 h-14 rounded-xl bg-[#00A74A]/10 flex items-center justify-center mb-5 group-hover:bg-[#00A74A]/20 transition-colors">
+                <Database className="w-7 h-7 text-[#00A74A]" />
+              </div>
+              <h2 className="text-xl font-display font-bold text-foreground mb-2">
+                SAP Portal
+              </h2>
+              <p className="text-sm text-muted-foreground mb-5">
+                Item & material management with packaging and BOM
+              </p>
+              <span className="inline-flex items-center gap-2 text-sm font-medium text-[#00A74A]">
+                Enter SAP
+                <ArrowLeft className="w-4 h-4 rotate-180 transition-transform group-hover:translate-x-1" />
+              </span>
+            </button>
+            
             {/* WorkBench PDP Card - Blue */}
             <button
               onClick={() => navigate(`/session/${sessionId}/workbench`)}
@@ -123,7 +143,7 @@ const SessionSelector = () => {
                 WorkBench PDP
               </h2>
               <p className="text-sm text-muted-foreground mb-5">
-                Internal engineering and design workspace for product data management
+                Chapter & range management with yellow linking
               </p>
               <span className="inline-flex items-center gap-2 text-sm font-medium text-[hsl(var(--workbench))]">
                 Enter WorkBench
@@ -143,7 +163,7 @@ const SessionSelector = () => {
                 Web View Store
               </h2>
               <p className="text-sm text-muted-foreground mb-5">
-                Customer-facing storefront preview with shopping cart
+                Published content with chapter navigation
               </p>
               <span className="inline-flex items-center gap-2 text-sm font-medium text-accent">
                 View Store
