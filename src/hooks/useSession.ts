@@ -111,22 +111,15 @@ export const useSession = (sessionId: string | null) => {
           localStorage.removeItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
         } else {
           // Migrate old session format if needed
-          if (!parsed.products) {
-            parsed.products = [];
-          }
-          if (!parsed.cart) {
-            parsed.cart = createDefaultCart();
-          }
-          if (!parsed.activeUsers) {
-            parsed.activeUsers = [];
-          }
+          if (!parsed.products) parsed.products = [];
+          if (!parsed.cart) parsed.cart = createDefaultCart();
+          if (!parsed.activeUsers) parsed.activeUsers = [];
           if (!parsed.settings) {
-            parsed.settings = {
-              theme: 'hilti',
-              currency: 'USD',
-              collaborationEnabled: true,
-            };
+            parsed.settings = { theme: 'hilti', currency: 'USD', collaborationEnabled: true };
           }
+          // Migrate: ensure new fields exist
+          if (!parsed.sapItems) parsed.sapItems = [];
+          if (!parsed.ranges) parsed.ranges = [];
           
           // Initialize current user
           const user = initializeUser(parsed);
@@ -603,6 +596,17 @@ export const useSession = (sessionId: string | null) => {
     return counts;
   }, [session]);
 
+  // Generic session update — used by SAP Portal and WorkBench
+  const updateSession = useCallback((updatedSession: SessionData) => {
+    if (!sessionId) return;
+    setSession(updatedSession);
+    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(updatedSession));
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: `${SESSION_STORAGE_PREFIX}${sessionId}`,
+      newValue: JSON.stringify(updatedSession),
+    }));
+  }, [sessionId]);
+
   return {
     session,
     products: session?.products ?? [],
@@ -632,6 +636,7 @@ export const useSession = (sessionId: string | null) => {
     getOnlineUsers,
     
     // Session operations
+    updateSession,
     resetSession,
     createSession,
   };

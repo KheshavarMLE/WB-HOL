@@ -4,7 +4,7 @@ export interface Specification {
   value: string;
 }
 
-export type ProductCategory = 
+export type ProductCategory =
   | 'Power Tools'
   | 'Hand Tools'
   | 'Fastening Systems'
@@ -14,25 +14,13 @@ export type ProductCategory =
   | 'Other';
 
 export const PRODUCT_CATEGORIES: ProductCategory[] = [
-  'Power Tools',
-  'Hand Tools',
-  'Fastening Systems',
-  'Measuring Tools',
-  'Safety Equipment',
-  'Accessories',
-  'Other',
+  'Power Tools', 'Hand Tools', 'Fastening Systems',
+  'Measuring Tools', 'Safety Equipment', 'Accessories', 'Other',
 ];
 
-// User colors for collaboration
 export const USER_COLORS = [
-  '#FF5733', // Red-Orange
-  '#33C3FF', // Sky Blue
-  '#A833FF', // Purple
-  '#33FF57', // Green
-  '#FFD433', // Yellow
-  '#FF33A8', // Pink
-  '#33FFF5', // Cyan
-  '#FF8C33', // Orange
+  '#FF5733', '#33C3FF', '#A833FF', '#33FF57',
+  '#FFD433', '#FF33A8', '#33FFF5', '#FF8C33',
 ] as const;
 
 export interface UserInfo {
@@ -63,7 +51,6 @@ export interface ProductData {
   specifications: Specification[];
   createdAt: string;
   lastModified: string;
-  // Phase 3: User attribution
   createdBy?: UserInfo;
   lastModifiedBy?: UserInfo;
 }
@@ -89,6 +76,75 @@ export interface SessionSettings {
   collaborationEnabled: boolean;
 }
 
+// ── SAP ──────────────────────────────────────────────────────────────────────
+
+export interface BOMComponent {
+  id: string;
+  component: string;
+  quantity: number;
+  unit: string;
+}
+
+export interface SAPItem {
+  itemId: string;
+  itemNumber: string;
+  name: string;
+  description: string;
+  packaging: {
+    unit: string;
+    quantity: number;
+    dimensions?: string;
+    weight?: number;
+  };
+  billOfMaterials: BOMComponent[];
+  specifications: Specification[];
+  primaryImage?: string;
+  createdAt: string;
+  lastModified: string;
+}
+
+export const generateSAPItemId = (): string =>
+  `SAP-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+export const createDefaultSAPItem = (): SAPItem => ({
+  itemId: generateSAPItemId(),
+  itemNumber: '',
+  name: '',
+  description: '',
+  packaging: { unit: 'pcs', quantity: 1 },
+  billOfMaterials: [],
+  specifications: [],
+  createdAt: new Date().toISOString(),
+  lastModified: new Date().toISOString(),
+});
+
+// ── Range ─────────────────────────────────────────────────────────────────────
+
+export interface Range {
+  rangeId: string;
+  name: string;
+  description?: string;
+  sapItemIds: string[];
+  isPublished: boolean;
+  publishedAt?: string;
+  createdAt: string;
+  lastModified: string;
+}
+
+export const generateRangeId = (): string =>
+  `range_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+export const createDefaultRange = (name: string = ''): Range => ({
+  rangeId: generateRangeId(),
+  name,
+  sapItemIds: [],
+  isPublished: false,
+  createdAt: new Date().toISOString(),
+  lastModified: new Date().toISOString(),
+});
+
+// ── Session ───────────────────────────────────────────────────────────────────
+
 export interface SessionData {
   sessionId: string;
   createdAt: string;
@@ -97,58 +153,39 @@ export interface SessionData {
   cart: CartData;
   activeUsers: ActiveUser[];
   settings: SessionSettings;
-  // Phase 4: SAP Portal & Chapter Structure
-  sapItems?: any[]; // SAPItem[] from sap.ts
-  blueChapters?: any[]; // BlueChapter[] from chapter.ts
-  yellowChapters?: any[]; // YellowChapter[] from chapter.ts
+  sapItems: SAPItem[];
+  ranges: Range[];
 }
 
-export const generateProductId = (): string => {
-  return `p_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-};
+export const generateProductId = (): string =>
+  `p_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-export const generateUserId = (): string => {
-  return `user_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-};
+export const generateUserId = (): string =>
+  `user_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
 export const createDefaultProduct = (): ProductData => ({
   productId: generateProductId(),
-  name: '',
-  sku: '',
-  category: '',
-  price: '',
-  stock: '',
-  description: '',
-  primaryImage: '',
-  additionalImages: [],
-  specifications: [],
+  name: '', sku: '', category: '', price: '', stock: '',
+  description: '', primaryImage: '', additionalImages: [], specifications: [],
   createdAt: new Date().toISOString(),
   lastModified: new Date().toISOString(),
 });
 
 export const createDefaultCart = (): CartData => ({
-  items: [],
-  subtotal: 0,
-  itemCount: 0,
+  items: [], subtotal: 0, itemCount: 0,
   lastUpdated: new Date().toISOString(),
 });
 
 export const createDefaultSession = (sessionId: string): SessionData => ({
   sessionId,
   createdAt: new Date().toISOString(),
-  expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
+  expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   products: [],
   cart: createDefaultCart(),
   activeUsers: [],
-  settings: {
-    theme: 'hilti',
-    currency: 'USD',
-    collaborationEnabled: true,
-  },
+  settings: { theme: 'hilti', currency: 'USD', collaborationEnabled: true },
   sapItems: [],
-  blueChapters: [],
-  yellowChapters: [],
+  ranges: [],
 });
 
-// Legacy compatibility - map old single product to new format
 export const defaultProductData: ProductData = createDefaultProduct();
