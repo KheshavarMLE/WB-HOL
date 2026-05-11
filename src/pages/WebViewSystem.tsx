@@ -10,7 +10,7 @@ import {
   CheckCircle2, ShoppingBag, RefreshCw, AlertCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { SAPItem, Range, CartItem, CartData, createDefaultCart, SessionData } from '@/types/product';
+import { SAPItem, Range, SessionData } from '@/types/product';
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 
@@ -37,22 +37,41 @@ const WebViewSystem = () => {
   /* ── Data ── */
   const allRanges: Range[] = session?.ranges ?? [];
   const allSapItems: SAPItem[] = session?.sapItems ?? [];
+  const pdpOverrides: Record<string, any> = (session as any)?.pdpOverrides ?? {};
+
+  /** Merge SAP base item with any PDP overrides */
+  const resolveItem = (item: SAPItem) => {
+    const ovr = pdpOverrides[item.itemId];
+    if (!ovr) return item;
+    return {
+      ...item,
+      name: ovr.pdpName || item.name,
+      description: ovr.pdpDescription || item.description,
+      primaryImage: ovr.pdpPrimaryImage || item.primaryImage,
+      additionalImages: ovr.pdpAdditionalImages?.length ? ovr.pdpAdditionalImages : [],
+      specifications: ovr.pdpSpecifications?.length ? ovr.pdpSpecifications : item.specifications,
+      pdpPrice: ovr.pdpPrice,
+      pdpStock: ovr.pdpStock,
+      technicalInfo: ovr.technicalInfo,
+      marketingCopy: ovr.marketingCopy,
+    };
+  };
   const publishedRanges = allRanges.filter(r => r.isPublished);
 
   const activeRange = allRanges.find(r => r.rangeId === activeRangeId) ?? null;
-  const activeItem = allSapItems.find(i => i.itemId === activeItemId) ?? null;
+  const activeItem = activeItemId ? resolveItem(allSapItems.find(i => i.itemId === activeItemId)!) ?? null : null;
 
-  const rangeItems = (range: Range): SAPItem[] =>
-    allSapItems.filter(i => range.sapItemIds.includes(i.itemId));
+  const rangeItems = (range: Range) =>
+    allSapItems.filter(i => range.sapItemIds.includes(i.itemId)).map(resolveItem);
 
   /* search across published items */
   const searchResults: { item: SAPItem; range: Range }[] = search.trim().length > 1
     ? publishedRanges.flatMap(range =>
         rangeItems(range)
           .filter(i =>
-            i.name.toLowerCase().includes(search.toLowerCase()) ||
-            i.itemNumber.toLowerCase().includes(search.toLowerCase()) ||
-            i.description.toLowerCase().includes(search.toLowerCase())
+            (i.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+            (i.itemNumber ?? '').toLowerCase().includes(search.toLowerCase()) ||
+            (i.description ?? '').toLowerCase().includes(search.toLowerCase())
           )
           .map(item => ({ item, range }))
       )
@@ -381,6 +400,16 @@ const WebViewSystem = () => {
                   )}
                 </div>
 
+                {/* Price & Stock */}
+                {((activeItem as any).pdpPrice) && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl font-bold text-gray-900">${(activeItem as any).pdpPrice}</span>
+                    {(activeItem as any).pdpStock && (
+                      <span className="text-sm text-green-600 font-medium">{(activeItem as any).pdpStock} in stock</span>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-center gap-3 py-3 border-y border-gray-100">
                   <div className="bg-gray-50 rounded-lg px-3 py-1.5 text-sm">
                     <span className="text-gray-500">Unit: </span>
@@ -437,6 +466,26 @@ const WebViewSystem = () => {
                           <span className="text-gray-500">{bom.quantity} {bom.unit}</span>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Technical Info (from PDP override) */}
+                {(activeItem as any).technicalInfo && (
+                  <div>
+                    <h3 className="font-semibold text-gray-700 mb-2">Technical Information</h3>
+                    <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap border border-gray-200">
+                      {(activeItem as any).technicalInfo}
+                    </div>
+                  </div>
+                )}
+
+                {/* Marketing Copy (from PDP override) */}
+                {(activeItem as any).marketingCopy && (
+                  <div>
+                    <h3 className="font-semibold text-gray-700 mb-2">Key Benefits</h3>
+                    <div className="bg-[#E8F4FF] rounded-lg p-4 text-sm text-[#0066B3] leading-relaxed whitespace-pre-wrap border border-[#0066B3]/20">
+                      {(activeItem as any).marketingCopy}
                     </div>
                   </div>
                 )}
