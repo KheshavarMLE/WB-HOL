@@ -24,7 +24,6 @@ const App = () => (
           <Route path="/session/:sessionId/sap" element={<SAPPortal />} />
           <Route path="/session/:sessionId/workbench" element={<WorkBenchPDP />} />
           <Route path="/session/:sessionId/webview" element={<WebViewSystem />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
