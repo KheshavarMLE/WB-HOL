@@ -232,7 +232,7 @@ const SAPPortal = () => {
                   <div
                     key={item.itemId}
                     onClick={() => selectItem(item)}
-                    className={`group p-3 border rounded-lg cursor-pointer transition-all ${
+                    className={`group p-3 border rounded-lg cursor-pointer transition-all select-none ${
                       editing?.itemId === item.itemId
                         ? 'border-[#00A74A] bg-green-50 shadow-sm'
                         : 'border-gray-200 hover:border-green-300 hover:bg-green-50/50'
@@ -502,7 +502,7 @@ const SAPPortal = () => {
                   <Button
                     onClick={handleSave}
                     disabled={!editing.name.trim()}
-                    className="bg-[#00A74A] hover:bg-[#008A3D]"
+                    className="bg-[#00A74A] hover:bg-[#008A3D] text-white font-semibold shadow-sm"
                   >
                     <Save className="h-4 w-4 mr-2" />
                     Save SAP Item
