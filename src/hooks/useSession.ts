@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  SessionData, 
-  ProductData, 
-  CartData, 
+import {
+  SessionData,
+  ProductData,
+  CartData,
   CartItem,
   ActiveUser,
   UserInfo,
-  createDefaultSession, 
+  createDefaultSession,
   createDefaultProduct,
   createDefaultCart,
   generateUserId,
@@ -14,26 +14,31 @@ import {
 } from '@/types/product';
 import { toast } from 'sonner';
 
-// Use localStorage for cross-tab collaboration
+// ─── Storage keys ─────────────────────────────────────────────────────────────
 const SESSION_STORAGE_PREFIX = 'demo_session_';
 const USER_ID_PREFIX = 'user_id_';
 
-// Activity timeout (30 seconds for demo purposes)
-const ACTIVITY_TIMEOUT = 30000;
-const HEARTBEAT_INTERVAL = 10000;
+// How we share sessions across devices:
+// 1. Same browser / same device  → localStorage (instant, no-latency)
+// 2. Different browser / device  → sessionData is base64-encoded into the URL
+//    as a ?snap=<base64> query param the FIRST time the link is visited.
+//    After that, the receiver's localStorage takes over.
+//
+// The LandingPage encodes the current session state into the shareable URL so
+// ANY recipient can bootstrap from it — no server needed.
+
+const ACTIVITY_TIMEOUT = 30_000;
+const HEARTBEAT_INTERVAL = 10_000;
 
 export const generateSessionId = (): string => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  let r = '';
+  for (let i = 0; i < 8; i++) r += chars[Math.floor(Math.random() * chars.length)];
+  return r;
 };
 
-// Message types for BroadcastChannel
 interface BroadcastMessage {
-  type: 'PRODUCT_CHANGE' | 'CART_CHANGE' | 'USER_JOINED' | 'USER_LEFT' | 'HEARTBEAT';
+  type: 'SESSION_UPDATED' | 'PRODUCT_CHANGE' | 'CART_CHANGE' | 'USER_JOINED' | 'USER_LEFT' | 'HEARTBEAT';
   action?: 'CREATE' | 'UPDATE' | 'DELETE';
   product?: ProductData;
   userId: string;
@@ -42,39 +47,67 @@ interface BroadcastMessage {
   timestamp: number;
 }
 
+// ─── Snapshot helpers (URL-based sharing) ────────────────────────────────────
+
+/**
+ * Encode session data into a compact base64 string safe for URLs.
+ * We strip activeUsers and cart to keep it small.
+ */
+export const encodeSessionSnapshot = (session: SessionData): string => {
+  const slim = {
+    sessionId: session.sessionId,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    settings: session.settings,
+    sapItems: session.sapItems ?? [],
+    ranges: session.ranges ?? [],
+    pdpOverrides: (session as any).pdpOverrides ?? {},
+    // products kept for backward compat
+    products: session.products ?? [],
+  };
+  return btoa(encodeURIComponent(JSON.stringify(slim)));
+};
+
+/**
+ * Decode a snapshot string back into partial session data.
+ * Returns null if decoding fails.
+ */
+export const decodeSessionSnapshot = (snap: string): Partial<SessionData> | null => {
+  try {
+    const json = decodeURIComponent(atob(snap));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+};
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
 export const useSession = (sessionId: string | null) => {
   const [session, setSession] = useState<SessionData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<ActiveUser | null>(null);
-  
+
   const channelRef = useRef<BroadcastChannel | null>(null);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize or get user for this session
-  const initializeUser = useCallback((session: SessionData): ActiveUser => {
+  // ── Initialize/get user ──────────────────────────────────────────────────
+  const initializeUser = useCallback((sess: SessionData): ActiveUser => {
     if (!sessionId) throw new Error('No session ID');
-    
+
     let userId = localStorage.getItem(`${USER_ID_PREFIX}${sessionId}`);
-    let user: ActiveUser | undefined;
-    
-    if (userId) {
-      user = session.activeUsers.find(u => u.userId === userId);
-    }
-    
+    let user = userId ? sess.activeUsers.find(u => u.userId === userId) : undefined;
+
     if (!user) {
-      // Generate new user
       userId = generateUserId();
       localStorage.setItem(`${USER_ID_PREFIX}${sessionId}`, userId);
-      
-      // Assign username and color
-      const userNumber = session.activeUsers.length + 1;
-      const usedColors = session.activeUsers.map(u => u.color);
+
+      const userNumber = sess.activeUsers.length + 1;
+      const usedColors = sess.activeUsers.map(u => u.color);
       const availableColors = USER_COLORS.filter(c => !usedColors.includes(c));
-      const color = availableColors.length > 0 
-        ? availableColors[0] 
-        : USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
-      
+      const color = availableColors[0] ?? USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
+
       user = {
         userId,
         username: `User ${userNumber}`,
@@ -82,247 +115,180 @@ export const useSession = (sessionId: string | null) => {
         lastActive: Date.now(),
         isOnline: true,
       };
-      
-      session.activeUsers.push(user);
+      sess.activeUsers.push(user);
     } else {
-      // Update existing user
       user.lastActive = Date.now();
       user.isOnline = true;
     }
-    
+
     return user;
   }, [sessionId]);
 
-  // Load session from storage
+  // ── Save to localStorage ─────────────────────────────────────────────────
+  const saveSession = useCallback((updated: SessionData) => {
+    if (!sessionId) return;
+    setSession(updated);
+    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(updated));
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: `${SESSION_STORAGE_PREFIX}${sessionId}`,
+      newValue: JSON.stringify(updated),
+    }));
+  }, [sessionId]);
+
+  // ── Merge a snapshot into an existing (possibly empty) session ───────────
+  const mergeSnapshot = (base: SessionData, snap: Partial<SessionData>): SessionData => ({
+    ...base,
+    sapItems: snap.sapItems?.length ? snap.sapItems : base.sapItems,
+    ranges: snap.ranges?.length ? snap.ranges : base.ranges,
+    pdpOverrides: (snap as any).pdpOverrides ?? (base as any).pdpOverrides ?? {},
+    products: snap.products?.length ? snap.products : base.products,
+    // Keep expiresAt from snap so the session doesn't immediately expire
+    expiresAt: snap.expiresAt ?? base.expiresAt,
+    settings: snap.settings ?? base.settings,
+  });
+
+  // ── Load session ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId) {
       setIsLoading(false);
       return;
     }
 
+    // 1. Check URL for a snapshot param (cross-device sharing)
+    const urlParams = new URLSearchParams(window.location.search);
+    const snapParam = urlParams.get('snap');
+    const snapData = snapParam ? decodeSessionSnapshot(snapParam) : null;
+
+    // If we decoded a snap, strip it from the URL immediately (clean URL)
+    if (snapParam) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, '', cleanUrl);
+    }
+
+    // 2. Try existing localStorage data
     const stored = localStorage.getItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
-    
+
+    let parsedSession: SessionData | null = null;
+
     if (stored) {
       try {
         const parsed = JSON.parse(stored) as SessionData;
-        // Check if session expired
         if (new Date(parsed.expiresAt) < new Date()) {
-          setError('This demo session has expired. Please generate a new session.');
-          localStorage.removeItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
+          // Expired — but if we have a snap, use it to refresh
+          if (snapData) {
+            parsedSession = mergeSnapshot(createDefaultSession(sessionId), snapData);
+          } else {
+            setError('This demo session has expired. Please generate a new session.');
+            localStorage.removeItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
+            setIsLoading(false);
+            return;
+          }
         } else {
-          // Migrate old session format if needed
-          if (!parsed.products) {
-            parsed.products = [];
+          parsedSession = parsed;
+          // If we also got a snap, merge it in (snap may have newer data)
+          if (snapData) {
+            parsedSession = mergeSnapshot(parsedSession, snapData);
           }
-          if (!parsed.cart) {
-            parsed.cart = createDefaultCart();
-          }
-          if (!parsed.activeUsers) {
-            parsed.activeUsers = [];
-          }
-          if (!parsed.settings) {
-            parsed.settings = {
-              theme: 'hilti',
-              currency: 'USD',
-              collaborationEnabled: true,
-            };
-          }
-          
-          // Initialize current user
-          const user = initializeUser(parsed);
-          setCurrentUser(user);
-          
-          // Save updated session
-          localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(parsed));
-          setSession(parsed);
         }
       } catch {
         setError('Invalid session data.');
+        setIsLoading(false);
+        return;
       }
+    } else if (snapData) {
+      // No local storage yet — bootstrap from snapshot
+      parsedSession = mergeSnapshot(createDefaultSession(sessionId), snapData);
     } else {
-      // Create new session if it doesn't exist
-      const newSession = createDefaultSession(sessionId);
-      const user = initializeUser(newSession);
-      setCurrentUser(user);
-      localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(newSession));
-      setSession(newSession);
+      // Completely new session — create blank
+      parsedSession = createDefaultSession(sessionId);
     }
-    
+
+    // 3. Migrate old fields
+    if (!parsedSession.products) parsedSession.products = [];
+    if (!parsedSession.cart) parsedSession.cart = createDefaultCart();
+    if (!parsedSession.activeUsers) parsedSession.activeUsers = [];
+    if (!parsedSession.settings) {
+      parsedSession.settings = { theme: 'hilti', currency: 'USD', collaborationEnabled: true };
+    }
+    if (!parsedSession.sapItems) parsedSession.sapItems = [];
+    if (!parsedSession.ranges) parsedSession.ranges = [];
+    if (!(parsedSession as any).pdpOverrides) (parsedSession as any).pdpOverrides = {};
+
+    // 4. Initialize user
+    const user = initializeUser(parsedSession);
+    setCurrentUser(user);
+
+    // 5. Persist and set state
+    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(parsedSession));
+    setSession(parsedSession);
     setIsLoading(false);
   }, [sessionId, initializeUser]);
 
-  // Set up BroadcastChannel for real-time sync
+  // ── BroadcastChannel (same-browser tab sync) ─────────────────────────────
   useEffect(() => {
     if (!sessionId) return;
 
-    // Create broadcast channel
     channelRef.current = new BroadcastChannel(`session_${sessionId}`);
-    
+
     channelRef.current.onmessage = (event: MessageEvent<BroadcastMessage>) => {
-      const { type, action, product, userId, username, userColor } = event.data;
-      
-      // Ignore own messages
+      const { type, userId, username } = event.data;
       if (userId === currentUser?.userId) return;
-      
-      if (type === 'PRODUCT_CHANGE' && product && action) {
-        // Reload session from storage
+
+      if (type === 'SESSION_UPDATED') {
+        // Another tab updated the session — reload from localStorage
         const stored = localStorage.getItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
         if (stored) {
-          const parsed = JSON.parse(stored) as SessionData;
-          setSession(parsed);
-          
-          // Show notification
-          if (action === 'CREATE') {
-            toast.info(`${username || 'Another user'} created "${product.name || 'New Product'}"`, {
-              action: {
-                label: 'View',
-                onClick: () => {},
-              },
-            });
-          } else if (action === 'UPDATE') {
-            toast.info(`${username || 'Another user'} updated "${product.name}"`, {
-              duration: 3000,
-            });
-          } else if (action === 'DELETE') {
-            toast.info(`${username || 'Another user'} deleted a product`, {
-              duration: 3000,
-            });
-          }
+          try { setSession(JSON.parse(stored)); } catch {}
         }
       } else if (type === 'USER_JOINED') {
-        toast.success(`${username || 'A new user'} joined the session`, {
-          icon: '👋',
-          duration: 3000,
-        });
-        // Reload to get updated activeUsers
+        toast.success(`${username || 'A new user'} joined the session`, { icon: '👋', duration: 3000 });
         const stored = localStorage.getItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
         if (stored) {
-          setSession(JSON.parse(stored));
-        }
-      } else if (type === 'HEARTBEAT') {
-        // Update user activity in session
-        const stored = localStorage.getItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
-        if (stored) {
-          const parsed = JSON.parse(stored) as SessionData;
-          const user = parsed.activeUsers.find(u => u.userId === userId);
-          if (user) {
-            user.lastActive = Date.now();
-            user.isOnline = true;
-            localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(parsed));
-            setSession(parsed);
-          }
+          try { setSession(JSON.parse(stored)); } catch {}
         }
       }
     };
 
-    // Broadcast that this user joined
-    if (currentUser) {
-      channelRef.current.postMessage({
-        type: 'USER_JOINED',
-        userId: currentUser.userId,
-        username: currentUser.username,
-        userColor: currentUser.color,
-        timestamp: Date.now(),
-      } as BroadcastMessage);
-    }
-
     return () => {
       channelRef.current?.close();
+      channelRef.current = null;
     };
-  }, [sessionId, currentUser]);
+  }, [sessionId, currentUser?.userId]);
 
-  // Heartbeat to track active users
+  // ── Heartbeat ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || !currentUser) return;
 
     const sendHeartbeat = () => {
-      // Update own activity
-      const stored = localStorage.getItem(`${SESSION_STORAGE_PREFIX}${sessionId}`);
-      if (stored) {
-        const parsed = JSON.parse(stored) as SessionData;
-        const user = parsed.activeUsers.find(u => u.userId === currentUser.userId);
-        if (user) {
-          user.lastActive = Date.now();
-          user.isOnline = true;
-        }
-        
-        // Mark inactive users
-        parsed.activeUsers.forEach(u => {
-          if (u.userId !== currentUser.userId && Date.now() - u.lastActive > ACTIVITY_TIMEOUT) {
-            u.isOnline = false;
-          }
-        });
-        
-        localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(parsed));
-        setSession(parsed);
-      }
-      
-      // Broadcast heartbeat
       channelRef.current?.postMessage({
         type: 'HEARTBEAT',
         userId: currentUser.userId,
+        username: currentUser.username,
         timestamp: Date.now(),
-      } as BroadcastMessage);
+      } satisfies BroadcastMessage);
     };
 
     heartbeatRef.current = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
-    sendHeartbeat(); // Initial heartbeat
-
     return () => {
-      if (heartbeatRef.current) {
-        clearInterval(heartbeatRef.current);
-      }
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
   }, [sessionId, currentUser]);
 
-  // Listen for storage changes (cross-tab sync)
+  // ── Storage event (cross-tab on same origin) ─────────────────────────────
   useEffect(() => {
     if (!sessionId) return;
 
-    const handleStorageChange = (e: StorageEvent) => {
+    const handleStorage = (e: StorageEvent) => {
       if (e.key === `${SESSION_STORAGE_PREFIX}${sessionId}` && e.newValue) {
-        try {
-          const parsed = JSON.parse(e.newValue) as SessionData;
-          setSession(parsed);
-        } catch {
-          // Ignore parse errors
-        }
+        try { setSession(JSON.parse(e.newValue)); } catch {}
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, [sessionId]);
 
-  // Helper to save and broadcast session
-  const saveSession = useCallback((updatedSession: SessionData) => {
-    if (!sessionId) return;
-    setSession(updatedSession);
-    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(updatedSession));
-    
-    // Dispatch storage event for same-tab listeners
-    window.dispatchEvent(new StorageEvent('storage', {
-      key: `${SESSION_STORAGE_PREFIX}${sessionId}`,
-      newValue: JSON.stringify(updatedSession),
-    }));
-  }, [sessionId]);
-
-  // Notify other users of product changes
-  const notifyProductChange = useCallback((action: 'CREATE' | 'UPDATE' | 'DELETE', product: ProductData) => {
-    if (!currentUser) return;
-    
-    channelRef.current?.postMessage({
-      type: 'PRODUCT_CHANGE',
-      action,
-      product,
-      userId: currentUser.userId,
-      username: currentUser.username,
-      userColor: currentUser.color,
-      timestamp: Date.now(),
-    } as BroadcastMessage);
-  }, [currentUser]);
-
-  // Get user info for attribution
+  // ── getUserInfo helper ────────────────────────────────────────────────────
   const getUserInfo = useCallback((): UserInfo | undefined => {
     if (!currentUser) return undefined;
     return {
@@ -333,214 +299,115 @@ export const useSession = (sessionId: string | null) => {
     };
   }, [currentUser]);
 
-  // Product CRUD operations with user attribution
-  const createProduct = useCallback((productData?: Partial<ProductData>): ProductData | null => {
+  // ── Notify product change ────────────────────────────────────────────────
+  const notifyProductChange = useCallback((action: 'CREATE' | 'UPDATE' | 'DELETE', product: ProductData) => {
+    if (!currentUser) return;
+    channelRef.current?.postMessage({
+      type: 'PRODUCT_CHANGE',
+      action,
+      product,
+      userId: currentUser.userId,
+      username: currentUser.username,
+      userColor: currentUser.color,
+      timestamp: Date.now(),
+    } satisfies BroadcastMessage);
+  }, [currentUser]);
+
+  // ── CRUD: Products ───────────────────────────────────────────────────────
+  const createProduct = useCallback((): ProductData | null => {
     if (!session) return null;
-    
+    const newProduct = createDefaultProduct();
     const userInfo = getUserInfo();
-    const newProduct: ProductData = {
-      ...createDefaultProduct(),
-      ...productData,
-      createdBy: userInfo,
-      lastModifiedBy: userInfo,
-    };
-    
-    const updatedSession: SessionData = {
-      ...session,
-      products: [...session.products, newProduct],
-    };
-    
-    saveSession(updatedSession);
+    if (userInfo) {
+      newProduct.createdBy = userInfo;
+      newProduct.lastModifiedBy = userInfo;
+    }
+    const updated = { ...session, products: [...session.products, newProduct] };
+    saveSession(updated);
     notifyProductChange('CREATE', newProduct);
     return newProduct;
-  }, [session, saveSession, getUserInfo, notifyProductChange]);
+  }, [session, getUserInfo, saveSession, notifyProductChange]);
 
   const updateProduct = useCallback((productId: string, updates: Partial<ProductData>) => {
     if (!session) return;
-    
     const userInfo = getUserInfo();
-    const updatedProducts = session.products.map((product) =>
-      product.productId === productId
-        ? { 
-            ...product, 
-            ...updates, 
-            lastModified: new Date().toISOString(),
-            lastModifiedBy: userInfo,
-          }
-        : product
-    );
-    
-    const updatedProduct = updatedProducts.find(p => p.productId === productId);
-    
-    const updatedSession: SessionData = {
+    const updated = {
       ...session,
-      products: updatedProducts,
+      products: session.products.map(p =>
+        p.productId === productId
+          ? { ...p, ...updates, lastModified: new Date().toISOString(), lastModifiedBy: userInfo }
+          : p
+      ),
     };
-    
-    // Update cart if product details changed
-    if (updates.name || updates.price || updates.primaryImage) {
-      const cartItems = session.cart.items.map((item) => {
-        if (item.productId === productId) {
-          const product = updatedProducts.find(p => p.productId === productId);
-          if (product) {
-            return {
-              ...item,
-              productName: product.name,
-              price: product.price,
-              thumbnail: product.primaryImage,
-            };
-          }
-        }
-        return item;
-      });
-      
-      updatedSession.cart = {
-        ...session.cart,
-        items: cartItems,
-        subtotal: calculateSubtotal(cartItems),
-        lastUpdated: new Date().toISOString(),
-      };
-    }
-    
-    saveSession(updatedSession);
-    if (updatedProduct) {
-      notifyProductChange('UPDATE', updatedProduct);
-    }
-  }, [session, saveSession, getUserInfo, notifyProductChange]);
+    saveSession(updated);
+    const updatedProduct = updated.products.find(p => p.productId === productId);
+    if (updatedProduct) notifyProductChange('UPDATE', updatedProduct);
+  }, [session, getUserInfo, saveSession, notifyProductChange]);
 
   const deleteProduct = useCallback((productId: string) => {
     if (!session) return;
-    
-    const deletedProduct = session.products.find(p => p.productId === productId);
-    const updatedProducts = session.products.filter((p) => p.productId !== productId);
-    const updatedCartItems = session.cart.items.filter((item) => item.productId !== productId);
-    
-    const updatedSession: SessionData = {
-      ...session,
-      products: updatedProducts,
-      cart: {
-        items: updatedCartItems,
-        subtotal: calculateSubtotal(updatedCartItems),
-        itemCount: updatedCartItems.reduce((sum, item) => sum + item.quantity, 0),
-        lastUpdated: new Date().toISOString(),
-      },
-    };
-    
-    saveSession(updatedSession);
-    if (deletedProduct) {
-      notifyProductChange('DELETE', deletedProduct);
-    }
+    const product = session.products.find(p => p.productId === productId);
+    const updated = { ...session, products: session.products.filter(p => p.productId !== productId) };
+    saveSession(updated);
+    if (product) notifyProductChange('DELETE', product);
   }, [session, saveSession, notifyProductChange]);
 
   const duplicateProduct = useCallback((productId: string): ProductData | null => {
     if (!session) return null;
-    
-    const originalProduct = session.products.find((p) => p.productId === productId);
-    if (!originalProduct) return null;
-    
+    const original = session.products.find(p => p.productId === productId);
+    if (!original) return null;
     const userInfo = getUserInfo();
-    const duplicatedProduct: ProductData = {
-      ...originalProduct,
+    const duplicate: ProductData = {
+      ...original,
       productId: `p_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-      name: `${originalProduct.name} (Copy)`,
-      sku: `${originalProduct.sku}-COPY`,
+      name: `${original.name} (Copy)`,
       createdAt: new Date().toISOString(),
       lastModified: new Date().toISOString(),
       createdBy: userInfo,
       lastModifiedBy: userInfo,
     };
-    
-    const updatedSession: SessionData = {
-      ...session,
-      products: [...session.products, duplicatedProduct],
-    };
-    
-    saveSession(updatedSession);
-    notifyProductChange('CREATE', duplicatedProduct);
-    return duplicatedProduct;
-  }, [session, saveSession, getUserInfo, notifyProductChange]);
+    const updated = { ...session, products: [...session.products, duplicate] };
+    saveSession(updated);
+    notifyProductChange('CREATE', duplicate);
+    return duplicate;
+  }, [session, getUserInfo, saveSession, notifyProductChange]);
 
   const getProductById = useCallback((productId: string): ProductData | undefined => {
-    return session?.products.find((p) => p.productId === productId);
+    return session?.products.find(p => p.productId === productId);
   }, [session]);
 
-  // Cart operations
-  const calculateSubtotal = (items: CartItem[]): number => {
-    return items.reduce((sum, item) => {
-      const price = parseFloat(item.price) || 0;
-      return sum + (price * item.quantity);
-    }, 0);
-  };
-
+  // ── CRUD: Cart ───────────────────────────────────────────────────────────
   const addToCart = useCallback((product: ProductData, quantity: number = 1) => {
     if (!session) return;
-    
-    const existingItemIndex = session.cart.items.findIndex(
-      (item) => item.productId === product.productId
-    );
-    
-    let updatedItems: CartItem[];
-    
-    if (existingItemIndex > -1) {
-      // Increment existing item quantity
-      updatedItems = session.cart.items.map((item, index) =>
-        index === existingItemIndex
-          ? { ...item, quantity: item.quantity + quantity }
-          : item
+    const existing = session.cart.items.find(i => i.productId === product.productId);
+    let newItems: CartItem[];
+    if (existing) {
+      newItems = session.cart.items.map(i =>
+        i.productId === product.productId ? { ...i, quantity: i.quantity + quantity } : i
       );
     } else {
-      // Add new item
-      const newItem: CartItem = {
+      newItems = [...session.cart.items, {
         productId: product.productId,
         productName: product.name,
         price: product.price,
         quantity,
         thumbnail: product.primaryImage,
-      };
-      updatedItems = [...session.cart.items, newItem];
+      }];
     }
-    
-    const updatedCart: CartData = {
-      items: updatedItems,
-      subtotal: calculateSubtotal(updatedItems),
-      itemCount: updatedItems.reduce((sum, item) => sum + item.quantity, 0),
-      lastUpdated: new Date().toISOString(),
-    };
-    
-    const updatedSession: SessionData = {
-      ...session,
-      cart: updatedCart,
-    };
-    
-    saveSession(updatedSession);
+    const subtotal = newItems.reduce((s, i) => s + (parseFloat(i.price) || 0) * i.quantity, 0);
+    const itemCount = newItems.reduce((s, i) => s + i.quantity, 0);
+    const cart: CartData = { items: newItems, subtotal, itemCount, lastUpdated: new Date().toISOString() };
+    saveSession({ ...session, cart });
   }, [session, saveSession]);
 
   const updateCartQuantity = useCallback((productId: string, quantity: number) => {
     if (!session) return;
-    
-    let updatedItems: CartItem[];
-    
-    if (quantity <= 0) {
-      updatedItems = session.cart.items.filter((item) => item.productId !== productId);
-    } else {
-      updatedItems = session.cart.items.map((item) =>
-        item.productId === productId ? { ...item, quantity } : item
-      );
-    }
-    
-    const updatedCart: CartData = {
-      items: updatedItems,
-      subtotal: calculateSubtotal(updatedItems),
-      itemCount: updatedItems.reduce((sum, item) => sum + item.quantity, 0),
-      lastUpdated: new Date().toISOString(),
-    };
-    
-    const updatedSession: SessionData = {
-      ...session,
-      cart: updatedCart,
-    };
-    
-    saveSession(updatedSession);
+    const newItems = quantity <= 0
+      ? session.cart.items.filter(i => i.productId !== productId)
+      : session.cart.items.map(i => i.productId === productId ? { ...i, quantity } : i);
+    const subtotal = newItems.reduce((s, i) => s + (parseFloat(i.price) || 0) * i.quantity, 0);
+    const itemCount = newItems.reduce((s, i) => s + i.quantity, 0);
+    saveSession({ ...session, cart: { items: newItems, subtotal, itemCount, lastUpdated: new Date().toISOString() } });
   }, [session, saveSession]);
 
   const removeFromCart = useCallback((productId: string) => {
@@ -549,59 +416,64 @@ export const useSession = (sessionId: string | null) => {
 
   const clearCart = useCallback(() => {
     if (!session) return;
-    
-    const updatedSession: SessionData = {
-      ...session,
-      cart: createDefaultCart(),
-    };
-    
-    saveSession(updatedSession);
+    saveSession({ ...session, cart: createDefaultCart() });
   }, [session, saveSession]);
 
-  // Reset session data
-  const resetSession = useCallback(() => {
-    if (!sessionId) return;
-    
-    const newSession = createDefaultSession(sessionId);
-    if (currentUser) {
-      newSession.activeUsers.push(currentUser);
-    }
-    saveSession(newSession);
-  }, [sessionId, currentUser, saveSession]);
-
-  // Create a new session
-  const createSession = useCallback(() => {
-    const newSessionId = generateSessionId();
-    const newSession = createDefaultSession(newSessionId);
-    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${newSessionId}`, JSON.stringify(newSession));
-    return newSessionId;
-  }, []);
-
-  // Get online users count
+  // ── Misc ─────────────────────────────────────────────────────────────────
   const getOnlineUsers = useCallback((): ActiveUser[] => {
     if (!session) return [];
     return session.activeUsers.filter(u => u.isOnline);
   }, [session]);
 
-  // Filter products by creator
   const getProductsByCreator = useCallback((creatorId: string | null): ProductData[] => {
     if (!session) return [];
     if (!creatorId) return session.products;
     return session.products.filter(p => p.createdBy?.userId === creatorId);
   }, [session]);
 
-  // Get product counts by user
   const getProductCountsByUser = useCallback((): Map<string, number> => {
     const counts = new Map<string, number>();
     if (!session) return counts;
-    
     session.products.forEach(p => {
-      const userId = p.createdBy?.userId || 'unknown';
-      counts.set(userId, (counts.get(userId) || 0) + 1);
+      const uid = p.createdBy?.userId || 'unknown';
+      counts.set(uid, (counts.get(uid) || 0) + 1);
     });
-    
     return counts;
   }, [session]);
+
+  // ── updateSession (used by SAP Portal + WorkBench) ───────────────────────
+  const updateSession = useCallback((updatedSession: SessionData) => {
+    if (!sessionId) return;
+    setSession(updatedSession);
+    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${sessionId}`, JSON.stringify(updatedSession));
+    // Broadcast so other tabs know
+    channelRef.current?.postMessage({
+      type: 'SESSION_UPDATED',
+      userId: currentUser?.userId ?? '',
+      timestamp: Date.now(),
+    } satisfies BroadcastMessage);
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: `${SESSION_STORAGE_PREFIX}${sessionId}`,
+      newValue: JSON.stringify(updatedSession),
+    }));
+  }, [sessionId, currentUser]);
+
+  // ── resetSession ─────────────────────────────────────────────────────────
+  const resetSession = useCallback(() => {
+    if (!sessionId) return;
+    const newSession = createDefaultSession(sessionId);
+    if (currentUser) newSession.activeUsers.push(currentUser);
+    saveSession(newSession);
+    toast.success('Session reset');
+  }, [sessionId, currentUser, saveSession]);
+
+  // ── createSession ─────────────────────────────────────────────────────────
+  const createSession = useCallback(() => {
+    const newId = generateSessionId();
+    const newSession = createDefaultSession(newId);
+    localStorage.setItem(`${SESSION_STORAGE_PREFIX}${newId}`, JSON.stringify(newSession));
+    return newId;
+  }, []);
 
   return {
     session,
@@ -612,8 +484,6 @@ export const useSession = (sessionId: string | null) => {
     isLoading,
     error,
     isValid: !!session && !error,
-    
-    // Product operations
     createProduct,
     updateProduct,
     deleteProduct,
@@ -621,17 +491,12 @@ export const useSession = (sessionId: string | null) => {
     getProductById,
     getProductsByCreator,
     getProductCountsByUser,
-    
-    // Cart operations
     addToCart,
     updateCartQuantity,
     removeFromCart,
     clearCart,
-    
-    // User/collaboration operations
     getOnlineUsers,
-    
-    // Session operations
+    updateSession,
     resetSession,
     createSession,
   };
